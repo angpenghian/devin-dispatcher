@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Devin Dispatcher — Live Operations</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://api.github.com">
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div class="max-w-7xl mx-auto p-6">
+    <header class="mb-6">
+      <h1 class="text-2xl font-bold tracking-tight">Devin Dispatcher</h1>
+      <p class="text-sm text-slate-600">
+        Live operations dashboard.
+        Reads run reports from
+        <a id="repo-link" href="#" class="text-indigo-600 hover:underline mono"></a>.
+        Last loaded <span id="last-loaded" class="mono">—</span>.
+      </p>
+    </header>
+
+    <section id="kpis" class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+      <div class="rounded-lg border border-slate-200 bg-white p-4">
+        <div class="text-xs uppercase tracking-wider text-slate-500">Dispatches</div>
+        <div id="kpi-total" class="text-3xl font-semibold">—</div>
+      </div>
+      <div class="rounded-lg border border-slate-200 bg-white p-4">
+        <div class="text-xs uppercase tracking-wider text-slate-500">PRs Opened</div>
+        <div id="kpi-prs" class="text-3xl font-semibold text-emerald-600">—</div>
+      </div>
+      <div class="rounded-lg border border-slate-200 bg-white p-4">
+        <div class="text-xs uppercase tracking-wider text-slate-500">Success Rate</div>
+        <div id="kpi-success" class="text-3xl font-semibold">—</div>
+      </div>
+      <div class="rounded-lg border border-slate-200 bg-white p-4">
+        <div class="text-xs uppercase tracking-wider text-slate-500">ACUs Used</div>
+        <div id="kpi-acus" class="text-3xl font-semibold">—</div>
+      </div>
+      <div class="rounded-lg border border-slate-200 bg-white p-4">
+        <div class="text-xs uppercase tracking-wider text-slate-500">Eng-hrs Saved*</div>
+        <div id="kpi-hours" class="text-3xl font-semibold text-indigo-600">—</div>
+        <div class="text-[10px] text-slate-400">*PRs &times; 2.5h conservative</div>
+      </div>
+    </section>
+
+    <section class="rounded-lg border border-slate-200 bg-white overflow-hidden">
+      <div class="flex items-center justify-between p-4 border-b border-slate-100">
+        <h2 class="font-semibold">Recent dispatches</h2>
+        <button id="refresh" class="text-xs text-slate-500 hover:text-slate-900 underline">Refresh</button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+            <tr>
+              <th class="text-left px-4 py-2">When</th>
+              <th class="text-left px-4 py-2">Type</th>
+              <th class="text-left px-4 py-2">Repo / target</th>
+              <th class="text-left px-4 py-2">Outcome</th>
+              <th class="text-left px-4 py-2">PR</th>
+              <th class="text-left px-4 py-2">Devin session</th>
+              <th class="text-right px-4 py-2">Duration</th>
+              <th class="text-right px-4 py-2">ACUs</th>
+            </tr>
+          </thead>
+          <tbody id="rows" class="divide-y divide-slate-100"></tbody>
+        </table>
+      </div>
+      <div id="empty" class="hidden p-10 text-center text-sm text-slate-500">
+        No reports yet. Trigger a workflow in the Superset fork (label an issue
+        <span class="mono px-1 rounded bg-slate-100">devin-fix-this</span>, or
+        run the scan workflow) and refresh.
+      </div>
+    </section>
+
+    <footer class="mt-6 text-xs text-slate-400">
+      Source:
+      <a id="src-link" href="#" class="hover:underline mono"></a>.
+    </footer>
+  </div>
+
+  <script>
+    // ────────────────────────────────────────────────────────────────────────
+    // Config: which repo to read reports from. Inferred from the GH Pages URL
+    // (e.g. angpenghian.github.io/devin-dispatcher → angpenghian/devin-dispatcher).
+    // Override by appending ?repo=owner/name to the URL.
+    // ────────────────────────────────────────────────────────────────────────
+    const params = new URLSearchParams(location.search);
+    const repoFromParams = params.get("repo");
+    const hostParts = location.hostname.split(".");
+    const inferredOwner = hostParts[0];
+    const inferredName = location.pathname.split("/").filter(Boolean)[0] || "devin-dispatcher";
+    const REPO = repoFromParams || `${inferredOwner}/${inferredName}`;
+    const BRANCH = params.get("branch") || "main";
+    const REPORTS_PATH = params.get("path") || "reports";
+
+    const $ = (s) => document.querySelector(s);
+
+    $("#repo-link").textContent = REPO;
+    $("#repo-link").href = `https://github.com/${REPO}/tree/${BRANCH}/${REPORTS_PATH}`;
+    $("#src-link").textContent = REPO;
+    $("#src-link").href = `https://github.com/${REPO}`;
+
+    // ──────────── DOM helpers — all user data goes through textContent ────────────
+    function el(tag, opts = {}, ...children) {
+      const node = document.createElement(tag);
+      if (opts.class) node.className = opts.class;
+      if (opts.text != null) node.textContent = String(opts.text);
+      if (opts.href != null) node.setAttribute("href", String(opts.href));
+      if (opts.title != null) node.setAttribute("title", String(opts.title));
+      for (const c of children) {
+        if (c == null) continue;
+        node.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+      }
+      return node;
+    }
+
+    function safeHttpUrl(s) {
+      if (typeof s !== "string") return null;
+      try {
+        const u = new URL(s);
+        if (u.protocol === "http:" || u.protocol === "https:") return u.href;
+      } catch (_) {}
+      return null;
+    }
+
+    // ──────────── Data fetching ────────────
+    async function listReportFiles() {
+      const url = `https://api.github.com/repos/${REPO}/contents/${REPORTS_PATH}?ref=${BRANCH}`;
+      const r = await fetch(url);
+      if (!r.ok) {
+        if (r.status === 404) return [];
+        throw new Error(`GitHub API ${r.status}`);
+      }
+      const items = await r.json();
+      return items.filter((it) => it.type === "file" && it.name.endsWith(".json"));
+    }
+
+    async function fetchReport(item) {
+      const r = await fetch(item.download_url);
+      if (!r.ok) throw new Error(`fetch ${item.name} ${r.status}`);
+      return r.json();
+    }
+
+    // ──────────── Formatters ────────────
+    function fmtDuration(secs) {
+      if (secs == null) return "—";
+      if (secs < 60) return `${Math.round(secs)}s`;
+      const m = Math.floor(secs / 60);
+      const s = Math.round(secs % 60);
+      return `${m}m ${s}s`;
+    }
+
+    function fmtWhen(iso) {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      const now = new Date();
+      const diffMs = now - d;
+      const mins = Math.floor(diffMs / 60000);
+      if (mins < 1) return "just now";
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return `${hrs}h ago`;
+      return d.toISOString().slice(0, 16).replace("T", " ");
+    }
+
+    function outcomeBadge(o) {
+      const map = {
+        pr_opened: ["bg-emerald-100 text-emerald-800", "PR opened"],
+        investigated_no_action: ["bg-amber-100 text-amber-800", "no action"],
+        blocked: ["bg-rose-100 text-rose-800", "blocked"],
+      };
+      const [cls, label] = map[o] || ["bg-slate-100 text-slate-700", String(o ?? "unknown")];
+      return el("span", { class: `mono text-xs ${cls} px-2 py-0.5 rounded`, text: label });
+    }
+
+    function targetCell(r) {
+      const repo = typeof r.repo === "string" ? r.repo : "—";
+      const payload = (r.payload && typeof r.payload === "object") ? r.payload : {};
+      const wrap = el("div");
+      wrap.appendChild(el("div", {}, el("span", { class: "mono text-xs text-slate-500", text: repo })));
+      const detail = el("div");
+      if (r.task_type === "fix-issue" && Number.isInteger(payload.issue_number)) {
+        const safeRepo = encodeURIComponent(repo).replace(/%2F/g, "/");
+        detail.appendChild(el("a", {
+          class: "text-indigo-600 hover:underline",
+          href: `https://github.com/${safeRepo}/issues/${payload.issue_number}`,
+          text: `#${payload.issue_number}`,
+        }));
+      } else if (r.task_type === "upgrade-dep" && payload.package) {
+        detail.appendChild(el("span", { class: "mono", text: String(payload.package) }));
+        detail.appendChild(document.createTextNode(
+          ` ${String(payload.current_version ?? "?")}→${String(payload.fix_version ?? "?")}`
+        ));
+      }
+      wrap.appendChild(detail);
+      return wrap;
+    }
+
+    function prCell(r) {
+      const href = safeHttpUrl(r.pr_url);
+      if (!href) return el("span", { class: "text-slate-300", text: "—" });
+      const parts = href.split("/").filter(Boolean);
+      const label = parts.slice(-3).join("/");
+      return el("a", { class: "text-emerald-700 hover:underline mono text-xs", href, text: label });
+    }
+
+    function sessionCell(r) {
+      const href = safeHttpUrl(r.devin_session_url);
+      if (!href) return el("span", { class: "text-slate-300", text: "—" });
+      const sid = typeof r.devin_session_id === "string" ? r.devin_session_id : "open";
+      return el("a", { class: "text-indigo-600 hover:underline mono text-xs", href, text: sid });
+    }
+
+    function summaryCell(r) {
+      return el("td", { class: "px-4 py-2 text-xs text-slate-500", text: String(r.summary ?? "") });
+    }
+
+    function renderRows(reports) {
+      const tbody = $("#rows");
+      tbody.replaceChildren();
+      if (reports.length === 0) { $("#empty").classList.remove("hidden"); return; }
+      $("#empty").classList.add("hidden");
+
+      reports.forEach((r) => {
+        const tr = el("tr", { class: "hover:bg-slate-50", title: typeof r.summary === "string" ? r.summary : "" });
+        const taskType = typeof r.task_type === "string" ? r.task_type : "—";
+
+        tr.appendChild(el("td", { class: "px-4 py-2 whitespace-nowrap", text: fmtWhen(r.started_at) }));
+        tr.appendChild(el("td", { class: "px-4 py-2 whitespace-nowrap mono text-xs", text: taskType }));
+
+        const targetTd = el("td", { class: "px-4 py-2" });
+        targetTd.appendChild(targetCell(r));
+        tr.appendChild(targetTd);
+
+        const outTd = el("td", { class: "px-4 py-2 whitespace-nowrap" });
+        outTd.appendChild(outcomeBadge(r.outcome));
+        tr.appendChild(outTd);
+
+        const prTd = el("td", { class: "px-4 py-2 whitespace-nowrap" });
+        prTd.appendChild(prCell(r));
+        tr.appendChild(prTd);
+
+        const sessTd = el("td", { class: "px-4 py-2 whitespace-nowrap" });
+        sessTd.appendChild(sessionCell(r));
+        tr.appendChild(sessTd);
+
+        tr.appendChild(el("td", { class: "px-4 py-2 whitespace-nowrap text-right mono text-xs", text: fmtDuration(r.duration_seconds) }));
+        const acuTxt = (typeof r.acus_consumed === "number") ? r.acus_consumed.toFixed(1) : "—";
+        tr.appendChild(el("td", { class: "px-4 py-2 whitespace-nowrap text-right mono text-xs", text: acuTxt }));
+
+        tbody.appendChild(tr);
+      });
+    }
+
+    function computeKpis(reports) {
+      const total = reports.length;
+      const prs = reports.filter((r) => r.outcome === "pr_opened").length;
+      const succ = reports.filter((r) => r.final_status === "finished").length;
+      const acus = reports.reduce((a, r) => a + (Number(r.acus_consumed) || 0), 0);
+      const hours = (prs * 2.5).toFixed(1);
+      $("#kpi-total").textContent = total;
+      $("#kpi-prs").textContent = prs;
+      $("#kpi-success").textContent = total ? `${Math.round((succ / total) * 100)}%` : "—";
+      $("#kpi-acus").textContent = acus.toFixed(1);
+      $("#kpi-hours").textContent = hours;
+    }
+
+    async function load() {
+      $("#last-loaded").textContent = "loading…";
+      try {
+        const files = await listReportFiles();
+        const reports = await Promise.all(files.map(fetchReport));
+        reports.sort((a, b) => String(b.started_at ?? "").localeCompare(String(a.started_at ?? "")));
+        renderRows(reports);
+        computeKpis(reports);
+        $("#last-loaded").textContent = new Date().toISOString().replace("T", " ").slice(0, 19) + "Z";
+      } catch (e) {
+        $("#last-loaded").textContent = `error: ${e.message}`;
+      }
+    }
+
+    $("#refresh").addEventListener("click", load);
+    load();
+    setInterval(load, 30000); // auto-refresh every 30s
+  </script>
+</body>
+</html>

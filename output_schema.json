@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DevinDispatchOutput",
+  "description": "Structured output every Devin session in this dispatcher must return.",
+  "type": "object",
+  "properties": {
+    "outcome": {
+      "type": "string",
+      "enum": ["pr_opened", "investigated_no_action", "blocked"],
+      "description": "pr_opened: you opened a PR you stand behind. investigated_no_action: you looked but chose not to PR. blocked: you couldn't proceed (state why in summary)."
+    },
+    "pr_url": {
+      "type": ["string", "null"],
+      "description": "Full URL of the PR you opened. Null if outcome != pr_opened."
+    },
+    "summary": {
+      "type": "string",
+      "description": "1-3 sentence honest summary of what you did, what worked, and what didn't."
+    }
+  },
+  "required": ["outcome", "summary"],
+  "additionalProperties": false
+}
