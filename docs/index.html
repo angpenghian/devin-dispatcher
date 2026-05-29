@@ -41,9 +41,9 @@
         <div id="kpi-acus" class="text-3xl font-semibold">—</div>
       </div>
       <div class="rounded-lg border border-slate-200 bg-white p-4">
-        <div class="text-xs uppercase tracking-wider text-slate-500">Eng-hrs Saved*</div>
+        <div class="text-xs uppercase tracking-wider text-slate-500">Autonomous Hrs</div>
         <div id="kpi-hours" class="text-3xl font-semibold text-indigo-600">—</div>
-        <div class="text-[10px] text-slate-400">*PRs &times; 2.5h conservative</div>
+        <div class="text-[10px] text-slate-400">total unattended Devin runtime</div>
       </div>
     </section>
 
@@ -318,7 +318,9 @@
       // a PR with failing checks isn't a fix. Only green-CI PRs count.
       const green = reports.filter((r) => r._ci === "green").length;
       const acus = reports.reduce((a, r) => a + (Number(r.acus_consumed) || 0), 0);
-      const hours = (green * 2.5).toFixed(1); // only count verified-green PRs as saved time
+      // Real data: total wall-clock time Devin ran unattended across all dispatches.
+      const totalSecs = reports.reduce((a, r) => a + (Number(r.duration_seconds) || 0), 0);
+      const hours = (totalSecs / 3600).toFixed(1);
       $("#kpi-total").textContent = total;
       $("#kpi-prs").textContent = prs;
       $("#kpi-success").textContent = prs ? `${Math.round((green / prs) * 100)}%` : "—";
