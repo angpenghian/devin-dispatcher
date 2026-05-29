@@ -256,7 +256,7 @@
         tr.appendChild(sessTd);
 
         tr.appendChild(el("td", { class: "px-4 py-2 whitespace-nowrap text-right mono text-xs", text: fmtDuration(r.duration_seconds) }));
-        const acuTxt = (typeof r.acus_consumed === "number") ? r.acus_consumed.toFixed(1) : "—";
+        const acuTxt = (typeof r.acus_consumed === "number" && r.acus_consumed > 0) ? r.acus_consumed.toFixed(1) : "—";
         tr.appendChild(el("td", { class: "px-4 py-2 whitespace-nowrap text-right mono text-xs", text: acuTxt }));
 
         tbody.appendChild(tr);
@@ -266,13 +266,18 @@
     function computeKpis(reports) {
       const total = reports.length;
       const prs = reports.filter((r) => r.outcome === "pr_opened").length;
-      const succ = reports.filter((r) => r.final_status === "finished").length;
+      // A dispatch "succeeded" if Devin reached a clean terminal outcome —
+      // it opened a PR, or finished after deciding no action was needed.
+      const succ = reports.filter((r) =>
+        r.outcome === "pr_opened" || r.outcome === "investigated_no_action" || r.final_status === "finished"
+      ).length;
       const acus = reports.reduce((a, r) => a + (Number(r.acus_consumed) || 0), 0);
       const hours = (prs * 2.5).toFixed(1);
       $("#kpi-total").textContent = total;
       $("#kpi-prs").textContent = prs;
       $("#kpi-success").textContent = total ? `${Math.round((succ / total) * 100)}%` : "—";
-      $("#kpi-acus").textContent = acus.toFixed(1);
+      // Devin's API doesn't surface ACU usage on this tier — show "—" rather than a misleading 0.
+      $("#kpi-acus").textContent = acus > 0 ? acus.toFixed(1) : "—";
       $("#kpi-hours").textContent = hours;
     }
 
