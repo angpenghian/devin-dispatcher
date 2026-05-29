@@ -85,13 +85,29 @@ def create_session(prompt: str, title: Optional[str] = None) -> dict:
     return r.json()
 
 
-def get_session(session_id: str) -> dict:
-    r = httpx.get(
-        f"{DEVIN_API}/v3/organizations/{DEVIN_ORG_ID}/sessions/{session_id}",
-        headers=_devin_headers(), timeout=30,
-    )
-    r.raise_for_status()
-    return r.json()
+def get_session(session_id: str, *, retries: int = 4) -> dict:
+    """Fetch session state, retrying transient network/5xx errors.
+
+    A single dropped request must never kill a multi-hour run, so we retry
+    timeouts, connection errors, and 5xx responses with a short backoff.
+    """
+    last_exc: Optional[Exception] = None
+    for attempt in range(retries):
+        try:
+            r = httpx.get(
+                f"{DEVIN_API}/v3/organizations/{DEVIN_ORG_ID}/sessions/{session_id}",
+                headers=_devin_headers(), timeout=30,
+            )
+            if r.status_code >= 500:
+                raise httpx.HTTPStatusError("server error", request=r.request, response=r)
+            r.raise_for_status()
+            return r.json()
+        except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPStatusError) as e:
+            last_exc = e
+            wait = min(5 * (attempt + 1), 30)
+            click.echo(f"  [poll] transient error ({type(e).__name__}); retry in {wait}s", err=True)
+            time.sleep(wait)
+    raise RuntimeError(f"get_session failed after {retries} retries: {last_exc}")
 
 
 def send_message(session_id: str, message: str) -> None:
@@ -112,8 +128,18 @@ def poll_until_done(session_id: str) -> dict:
     """
     deadline = time.monotonic() + SESSION_TIMEOUT_SECONDS
     nudges = 0
+    last_state: dict = {}
     while True:
-        state = get_session(session_id)
+        try:
+            state = get_session(session_id)
+        except RuntimeError as e:
+            # Exhausted retries on this poll; don't kill the run — wait and retry.
+            click.echo(f"  [poll] {e}; continuing", err=True)
+            if time.monotonic() >= deadline:
+                return last_state or {"session_id": session_id, "status_detail": "unknown"}
+            time.sleep(POLL_INTERVAL)
+            continue
+        last_state = state
         status = state.get("status_detail") or state.get("status", "unknown")
         click.echo(f"  [poll] status={status}", err=True)
 
