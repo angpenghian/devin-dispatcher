@@ -70,9 +70,9 @@
         </table>
       </div>
       <div id="empty" class="hidden p-10 text-center text-sm text-slate-500">
-        No reports yet. Trigger a workflow in the Superset fork (label an issue
-        <span class="mono px-1 rounded bg-slate-100">devin-fix-this</span>, or
-        run the scan workflow) and refresh.
+        No reports yet. Label an issue
+        <span class="mono px-1 rounded bg-slate-100">devin-fix-this</span>
+        in the target repo and refresh.
       </div>
     </section>
 
@@ -190,11 +190,8 @@
           href: `https://github.com/${safeRepo}/issues/${payload.issue_number}`,
           text: `#${payload.issue_number}`,
         }));
-      } else if (r.task_type === "upgrade-dep" && payload.package) {
-        detail.appendChild(el("span", { class: "mono", text: String(payload.package) }));
-        detail.appendChild(document.createTextNode(
-          ` ${String(payload.current_version ?? "?")}→${String(payload.fix_version ?? "?")}`
-        ));
+      } else if (payload.task_slug) {
+        detail.appendChild(el("span", { class: "mono text-xs text-slate-600", text: String(payload.task_slug) }));
       }
       wrap.appendChild(detail);
       return wrap;
