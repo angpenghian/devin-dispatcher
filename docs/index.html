@@ -155,6 +155,50 @@
       return json;
     }
 
+    // Real success = the PR's CI actually passes, not just that a PR was opened.
+    // Given a PR URL, resolve its current CI state to 'green' | 'red' | 'pending'.
+    // Terminal results (green/red) are cached so we don't re-poll them every
+    // refresh — keeps us under GitHub's unauthenticated rate limit.
+    const ciCache = new Map(); // pr_url -> 'green' | 'red'
+    async function fetchCiState(prUrl) {
+      if (ciCache.has(prUrl)) return ciCache.get(prUrl);
+      const m = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(prUrl || "");
+      if (!m) return "unknown";
+      const [, owner, repo, number] = m;
+      try {
+        const pr = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}`);
+        if (!pr.ok) return "unknown";
+        const sha = (await pr.json())?.head?.sha;
+        if (!sha) return "unknown";
+        const cr = await fetch(`https://api.github.com/repos/${owner}/${repo}/commits/${sha}/check-runs`);
+        if (!cr.ok) return "unknown";
+        const runs = (await cr.json())?.check_runs || [];
+        if (runs.length === 0) return "pending";
+        const bad = new Set(["failure", "cancelled", "timed_out", "action_required", "stale"]);
+        let pending = false;
+        let state = "green";
+        for (const run of runs) {
+          if (run.status !== "completed") { pending = true; continue; }
+          if (bad.has(run.conclusion)) { state = "red"; break; }
+        }
+        if (state !== "red" && pending) state = "pending";
+        if (state === "green" || state === "red") ciCache.set(prUrl, state); // cache terminal only
+        return state;
+      } catch (_) {
+        return "unknown";
+      }
+    }
+
+    function ciBadge(state) {
+      const map = {
+        green:   ["bg-emerald-100 text-emerald-800", "CI ✓"],
+        red:     ["bg-rose-100 text-rose-800", "CI ✗"],
+        pending: ["bg-amber-100 text-amber-800", "CI …"],
+      };
+      const [cls, label] = map[state] || ["bg-slate-100 text-slate-500", "CI —"];
+      return el("span", { class: `mono text-xs ${cls} px-2 py-0.5 rounded`, text: label });
+    }
+
     // ──────────── Formatters ────────────
     function fmtDuration(secs) {
       if (secs == null) return "—";
@@ -249,6 +293,10 @@
 
         const prTd = el("td", { class: "px-4 py-2 whitespace-nowrap" });
         prTd.appendChild(prCell(r));
+        if (r.pr_url) {
+          prTd.appendChild(document.createTextNode(" "));
+          prTd.appendChild(ciBadge(r._ci));
+        }
         tr.appendChild(prTd);
 
         const sessTd = el("td", { class: "px-4 py-2 whitespace-nowrap" });
@@ -266,16 +314,14 @@
     function computeKpis(reports) {
       const total = reports.length;
       const prs = reports.filter((r) => r.outcome === "pr_opened").length;
-      // A dispatch "succeeded" if Devin reached a clean terminal outcome —
-      // it opened a PR, or finished after deciding no action was needed.
-      const succ = reports.filter((r) =>
-        r.outcome === "pr_opened" || r.outcome === "investigated_no_action" || r.final_status === "finished"
-      ).length;
+      // Real success = the PR's CI actually passes. Opening a PR isn't enough —
+      // a PR with failing checks isn't a fix. Only green-CI PRs count.
+      const green = reports.filter((r) => r._ci === "green").length;
       const acus = reports.reduce((a, r) => a + (Number(r.acus_consumed) || 0), 0);
-      const hours = (prs * 2.5).toFixed(1);
+      const hours = (green * 2.5).toFixed(1); // only count verified-green PRs as saved time
       $("#kpi-total").textContent = total;
       $("#kpi-prs").textContent = prs;
-      $("#kpi-success").textContent = total ? `${Math.round((succ / total) * 100)}%` : "—";
+      $("#kpi-success").textContent = prs ? `${Math.round((green / prs) * 100)}%` : "—";
       // Devin's API doesn't surface ACU usage on this tier — show "—" rather than a misleading 0.
       $("#kpi-acus").textContent = acus > 0 ? acus.toFixed(1) : "—";
       $("#kpi-hours").textContent = hours;
