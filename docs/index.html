@@ -336,6 +336,10 @@
         const files = await listReportFiles();
         const reports = await Promise.all(files.map(fetchReport));
         reports.sort((a, b) => String(b.started_at ?? "").localeCompare(String(a.started_at ?? "")));
+        // Resolve each PR's live CI state so "success" reflects real green checks.
+        await Promise.all(reports.map(async (r) => {
+          r._ci = r.pr_url ? await fetchCiState(r.pr_url) : "none";
+        }));
         renderRows(reports);
         computeKpis(reports);
         $("#last-loaded").textContent = new Date().toISOString().replace("T", " ").slice(0, 19) + "Z";
