@@ -30,14 +30,24 @@ DEVIN_ORG_ID = os.getenv("DEVIN_ORG_ID", "")
 DEVIN_GITHUB_SECRET_NAME = os.getenv("DEVIN_GITHUB_SECRET_NAME") or None
 MAX_ACU_LIMIT = float(os.getenv("MAX_ACU_LIMIT", "20"))
 POLL_INTERVAL = float(os.getenv("POLL_INTERVAL_SECONDS", "30"))
-SESSION_TIMEOUT_SECONDS = int(os.getenv("SESSION_TIMEOUT_MINUTES", "60")) * 60
+SESSION_TIMEOUT_SECONDS = int(os.getenv("SESSION_TIMEOUT_MINUTES", "180")) * 60
+MAX_NUDGES = int(os.getenv("MAX_NUDGES", "5"))
 
 DEVIN_API = "https://api.devin.ai"
 HERE = Path(__file__).parent
-TERMINAL_STATUSES = {
-    "finished", "inactivity", "usage_limit_exceeded",
-    "waiting_for_user", "waiting_for_approval",
-}
+
+# Session is truly done — stop polling.
+TERMINAL_STATUSES = {"finished", "expired", "inactivity", "usage_limit_exceeded"}
+# Session paused for human input — we nudge it to continue autonomously instead
+# of giving up. This is the "manage the session" half of the dispatcher.
+NUDGE_STATUSES = {"waiting_for_user", "waiting_for_approval"}
+
+NUDGE_MESSAGE = (
+    "Continue working autonomously — do not wait for human input. Make the best "
+    "engineering decision and proceed. If you've opened a PR, make sure its CI is "
+    "green. If you are genuinely blocked after real attempts, finalize with the "
+    "structured output explaining what's blocking."
+)
 
 OUTPUT_SCHEMA = json.loads((HERE / "output_schema.json").read_text())
 PROMPTS = Environment(
@@ -84,13 +94,47 @@ def get_session(session_id: str) -> dict:
     return r.json()
 
 
+def send_message(session_id: str, message: str) -> None:
+    r = httpx.post(
+        f"{DEVIN_API}/v3/organizations/{DEVIN_ORG_ID}/sessions/{session_id}/messages",
+        headers=_devin_headers(), json={"message": message}, timeout=30,
+    )
+    r.raise_for_status()
+
+
 def poll_until_done(session_id: str) -> dict:
+    """Poll a session to completion, nudging it past human-input pauses.
+
+    Terminal statuses end the loop. If Devin pauses for input, we send one
+    autonomous-continue message (up to MAX_NUDGES times) and keep polling —
+    this is the "manage the session" half of the dispatcher, so long-horizon
+    tasks run unattended instead of stalling.
+    """
     deadline = time.monotonic() + SESSION_TIMEOUT_SECONDS
+    nudges = 0
     while True:
         state = get_session(session_id)
         status = state.get("status_detail") or state.get("status", "unknown")
         click.echo(f"  [poll] status={status}", err=True)
-        if status in TERMINAL_STATUSES or time.monotonic() >= deadline:
+
+        if status in TERMINAL_STATUSES:
+            return state
+
+        if status in NUDGE_STATUSES:
+            if nudges >= MAX_NUDGES:
+                click.echo(f"  [poll] still waiting after {MAX_NUDGES} nudges; stopping", err=True)
+                return state
+            nudges += 1
+            click.echo(f"  [nudge {nudges}/{MAX_NUDGES}] Devin paused; sending continue message", err=True)
+            try:
+                send_message(session_id, NUDGE_MESSAGE)
+            except httpx.HTTPError as e:
+                click.echo(f"  [nudge] send failed: {e}", err=True)
+            time.sleep(POLL_INTERVAL * 2)  # grace period for Devin to resume
+            continue
+
+        if time.monotonic() >= deadline:
+            click.echo("  [poll] timeout reached; returning current state", err=True)
             return state
         time.sleep(POLL_INTERVAL)
 
