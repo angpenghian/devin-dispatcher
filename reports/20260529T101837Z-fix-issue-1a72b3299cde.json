@@ -1,0 +1,20 @@
+{
+  "task_id": "1a72b3299cde",
+  "task_type": "fix-issue",
+  "payload": {
+    "issue_number": 6,
+    "issue_url": "https://github.com/angpenghian/superset/issues/6",
+    "branch": "master"
+  },
+  "repo": "angpenghian/superset",
+  "devin_session_id": "a5f7347417d34ab5abf8cef5e012f04d",
+  "devin_session_url": "https://app.devin.ai/sessions/a5f7347417d34ab5abf8cef5e012f04d",
+  "final_status": "usage_limit_exceeded",
+  "outcome": "pr_opened",
+  "pr_url": "https://github.com/angpenghian/superset/pull/7",
+  "summary": "PR opened with dependency upgrades. CI failed - investigating and fixing failures now.",
+  "acus_consumed": 0.0,
+  "started_at": "2026-05-29T10:18:37.038410+00:00",
+  "finished_at": "2026-05-29T12:06:16.694173+00:00",
+  "duration_seconds": 6459.655763
+}
